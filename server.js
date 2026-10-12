@@ -18,42 +18,56 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
         throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
     }
 
-    console.log(`Routing clean JSON payload via All-In-One API gateway for: ${instagramUrl}`);
+    console.log(`Routing corrected GET query to FastSaver endpoint for: ${instagramUrl}`);
 
-    // This premium engine accepts clean JSON bodies via standard POST requests
-    const response = await axios.post(
-        'https://rapidapi.com',
-        { 
-            url: instagramUrl 
+    // Official documentation routing mapping rules: GET request to /fetch
+    const response = await axios.get('https://rapidapi.com', {
+        params: { url: instagramUrl },
+        headers: {
+            'x-rapidapi-key': RAPIDAPI_KEY,
+            'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com'
         },
-        {
-            headers: {
-                'x-rapidapi-key': RAPIDAPI_KEY,
-                'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com',
-                'content-type': 'application/json'
-            },
-            timeout: 30000 // 30 seconds execution limit
-        }
-    );
+        timeout: 30000 // 30 seconds execution limit
+    });
 
     const data = response.data;
     
-    // Validate that data objects were successfully unpacked
-    if (!data || !data.media || !Array.isArray(data.media) || data.media.length === 0) {
-        throw new Error("The API engine could not find any active public media structures for this URL.");
+    if (!data) {
+        throw new Error("Empty response received from the API endpoint wrapper.");
     }
 
-    // Map platform parameters directly to our clean frontend layout rules
-    const mediaResults = data.media.map(item => {
-        // Evaluates item types directly (video, image)
-        const isVid = item.type === 'video' || (item.url && item.url.includes('.mp4'));
-        return {
-            type: isVid ? 'video' : 'image',
-            url: item.url || item.download_url
-        };
-    });
+    let mediaResults = [];
 
-    return mediaResults;
+    // Scenario A: Carousel Post layouts (API packages these under data.type === 'album')
+    if (data.type === 'album' && Array.isArray(data.album)) {
+        mediaResults = data.album.map(item => ({
+            type: item.type === 'video' ? 'video' : 'image',
+            url: item.download_url
+        }));
+    } 
+    // Scenario B: Single Video / Reel post format
+    else if (data.type === 'video' && data.download_url) {
+        mediaResults.push({
+            type: 'video',
+            url: data.download_url
+        });
+    } 
+    // Scenario C: Single Default Static Image format
+    else if (data.type === 'image' && data.download_url) {
+        mediaResults.push({
+            type: 'image',
+            url: data.download_url
+        });
+    }
+
+    // Filter out items that resolved without a direct source URL link string
+    const finalCleaned = mediaResults.filter(item => item.url);
+
+    if (finalCleaned.length === 0) {
+        throw new Error("API processed smoothly but could not extract active public download URLs from this post.");
+    }
+
+    return finalCleaned;
 }
 
 // Unified Download API Endpoint Gateway
@@ -67,7 +81,7 @@ app.post('/api/download', async (req, res) => {
         const media = await fetchMediaViaAllInOneAPI(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`API Execution Failure:`, error.message);
+        console.error(`FastSaver API Processing Fault:`, error.message);
         return res.status(500).json({ error: error.message });
     }
 });
