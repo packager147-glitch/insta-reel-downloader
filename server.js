@@ -13,59 +13,113 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Secure token loaded via the Render Environment configuration panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// High-success extraction function utilizing the SnapCDN API actor routing framework
+// Deep scanning utility to pull hidden CDN URLs if structural object maps vary
+function deepExtractCdnUrls(obj, collection = new Set()) {
+    if (!obj) return collection;
+    if (typeof obj === 'string') {
+        if (obj.includes('.cdninstagram.com') && (obj.startsWith('http://') || obj.startsWith('https://'))) {
+            collection.add(obj.replace(/\\u0026/g, '&'));
+        }
+    } else if (Array.isArray(obj)) {
+        for (const element of obj) deepExtractCdnUrls(element, collection);
+    } else if (typeof obj === 'object') {
+        for (const key in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, key)) deepExtractCdnUrls(obj[key], collection);
+        }
+    }
+    return collection;
+}
+
+// Engine 1: Dedicated SnapCDN Downloader Actor
+async function trySnapCdnEngine(url) {
+    const targetApiUrl = `https://apify.com`;
+    const response = await axios.post(targetApiUrl, { "url": url }, {
+        params: { token: APIFY_TOKEN },
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000
+    });
+
+    const dataItems = response.data;
+    if (!dataItems || !Array.isArray(dataItems) || dataItems.length === 0) return null;
+    
+    const resultItem = dataItems[0];
+    if (!resultItem.result || !Array.isArray(resultItem.result) || resultItem.result.length === 0) return null;
+
+    return resultItem.result.map(item => {
+        const isVideo = item.type === 'video' || item.url.includes('.mp4') || item.url.includes('mp4=');
+        return { type: isVideo ? 'video' : 'image', url: item.url };
+    });
+}
+
+// Engine 2: High-Success Core Scraper Node Fallback
+async function tryCoreScraperEngine(url) {
+    const targetApiUrl = `https://apify.com`;
+    const response = await axios.post(targetApiUrl, {
+        "directUrls": [url],
+        "resultsType": "details"
+    }, {
+        params: { token: APIFY_TOKEN },
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 40000
+    });
+
+    const items = response.data;
+    if (!items || !Array.isArray(items) || items.length === 0) return null;
+
+    const postData = items[0];
+    let foundUrls = [];
+
+    // Check common payload data properties directly
+    if (postData.childPosts && postData.childPosts.length > 0) {
+        foundUrls = postData.childPosts.map(c => c.videoUrl || c.displayUrl);
+    } else {
+        const singleUrl = postData.videoUrl || postData.displayUrl || postData.imageUrl;
+        if (singleUrl) foundUrls.push(singleUrl);
+    }
+
+    // Use deep search string fallback scanner if keys are empty
+    if (foundUrls.length === 0) {
+        foundUrls = Array.from(deepExtractCdnUrls(items));
+    }
+
+    if (foundUrls.length === 0) return null;
+
+    return foundUrls.map(cdnUrl => {
+        const isVideo = cdnUrl.includes('.mp4') || cdnUrl.includes('mp4=') || cdnUrl.includes('/v/');
+        return { type: isVideo ? 'video' : 'image', url: cdnUrl };
+    });
+}
+
+// Central Media Coordinator
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please check your APIFY_TOKEN key configuration inside Render.");
     }
-    
-    // Exact structural endpoint to trigger the actor container directly
-    const targetApiUrl = `https://apify.com`;
 
-    console.log(`Routing optimized SnapCDN API query request for URL: ${url}`);
-    
-    // The actor expects a POST request with the URL passed inside the JSON payload body
-    const response = await axios.post(
-        targetApiUrl, 
-        {
-            "url": url
-        }, 
-        {
-            params: { token: APIFY_TOKEN },
-            headers: { 
-                'Content-Type': 'application/json'
-            },
-            timeout: 45000 // 45-second execution constraint
-        }
-    );
+    // Clean URL string structures to drop extra tracking strings
+    let targetUrl = url.split('?')[0];
+    if (!targetUrl.endsWith('/')) targetUrl += '/';
 
-    const dataItems = response.data;
-    
-    // Check if the dataset items exist or if the array returned empty
-    if (!dataItems || !Array.isArray(dataItems) || dataItems.length === 0) {
-        throw new Error("The API engine could not find any active public media structures for this URL.");
+    console.log(`Running primary SnapCDN Engine for: ${targetUrl}`);
+    try {
+        const primaryResults = await trySnapCdnEngine(targetUrl);
+        if (primaryResults && primaryResults.length > 0) return primaryResults;
+    } catch (e) {
+        console.warn(`Primary Engine failed: ${e.message}. Dropping to Fallback Engine...`);
     }
 
-    // Process the first dataset entry item returned from the run execution array
-    const resultItem = dataItems[0];
-
-    if (!resultItem.result || !Array.isArray(resultItem.result) || resultItem.result.length === 0) {
-        throw new Error("Extraction complete but no downloadable result links found inside the object block.");
+    console.log(`Running core scraper fallback engine routing...`);
+    try {
+        const fallbackResults = await tryCoreScraperEngine(targetUrl);
+        if (fallbackResults && fallbackResults.length > 0) return fallbackResults;
+    } catch (e) {
+        console.error(`Fallback Engine error payload context: ${e.message}`);
     }
 
-    // Map the internal results payload array directly to your frontend architecture
-    const mediaResults = resultItem.result.map(item => {
-        const isVideoType = item.type === 'video' || item.url.includes('.mp4') || item.url.includes('mp4=');
-        return {
-            type: isVideoType ? 'video' : 'image',
-            url: item.url
-        };
-    });
-
-    return mediaResults;
+    throw new Error("Both extraction engines returned empty metrics. Ensure the post link is public and accessible.");
 }
 
-// Unified Download API Endpoint Gateway
+// Unified API Endpoint Gateway
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
@@ -76,10 +130,7 @@ app.post('/api/download', async (req, res) => {
         const media = await fetchInstagramMedia(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`SnapCDN Extraction Failed:`, error.message);
-        return res.status(500).json({ 
-            error: error.message || 'Failed to parse media structures from the targeted network stream.' 
-        });
+        return res.status(500).json({ error: error.message });
     }
 });
 
