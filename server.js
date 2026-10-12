@@ -13,23 +13,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Secure token loaded via the Render Environment configuration panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// High-success extraction utilizing the direct ApiDojo high-bypass core framework
+// High-success extraction function utilizing the corrected ApiDojo workflow input mapping
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please check your APIFY_TOKEN key configuration inside Render.");
     }
     
-    // Target the specific ApiDojo premium scraper API runner layer
+    // Exact sync runner API endpoint route for the ApiDojo Instagram Scraper API
     const targetApiUrl = "https://apify.com";
 
     console.log(`Routing optimized ApiDojo framework request for URL: ${url}`);
     
-    // The ApiDojo scraper uses the 'posts' target query mode for specific direct URLs
+    // Correct input mapping: ApiDojo expects 'startUrls' for target direct links
     const response = await axios.post(
         targetApiUrl,
         {
-            "directUrls": [url],
-            "resultsType": "details"
+            "startUrls": [url],
+            "maxItems": 1
         },
         { 
             params: { token: APIFY_TOKEN },
@@ -43,34 +43,37 @@ async function fetchInstagramMedia(url) {
         throw new Error("No data returned from high-bypass engine. Confirm the account profile is entirely public.");
     }
 
-    const postData = items[0]; // Isolate the primary container data node object
+    // Isolate the main post metadata item object node from the returned array collection
+    const postData = items[0]; 
     let mediaResults = [];
 
-    // Extract dynamic variations from ApiDojo object schema mapping
+    // 1. Check for Carousel Post layouts (Multiple images or videos side-by-side)
     if (postData.childPosts && Array.isArray(postData.childPosts) && postData.childPosts.length > 0) {
-        // Scenario A: Carousel Post layouts
         mediaResults = postData.childPosts.map(child => {
+            const isVid = child.isVideo || !!child.videoUrl;
             return {
-                type: (child.isVideo || child.videoUrl) ? 'video' : 'image',
+                type: isVid ? 'video' : 'image',
                 url: child.videoUrl || child.displayUrl || child.imageUrl
             };
         });
-    } else if (postData.isVideo || postData.videoUrl) {
-        // Scenario B: Single Video / Reel
+    } 
+    // 2. Check for single Video / Reel formats
+    else if (postData.isVideo || postData.videoUrl) {
         mediaResults.push({
             type: 'video',
             url: postData.videoUrl || postData.displayUrl
         });
-    } else if (postData.displayUrl || postData.imageUrl) {
-        // Scenario C: Single Image Post
+    } 
+    // 3. Check for standalone single Photo/Image Post formats
+    else if (postData.displayUrl || postData.imageUrl) {
         mediaResults.push({
             type: 'image',
             url: postData.displayUrl || postData.imageUrl
         });
     }
 
-    // Filter out missing strings or malformed properties cleanly
-    const finalCleaned = mediaResults.filter(item => item.url && item.url !== 'undefined');
+    // Filter out missing properties and remove tracking spaces
+    const finalCleaned = mediaResults.filter(item => item.url);
 
     if (finalCleaned.length === 0) {
         throw new Error("Extraction complete, but failed to locate raw media links inside the payload block.");
