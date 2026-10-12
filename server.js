@@ -13,7 +13,32 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Fetch the secure token loaded in your Render Environment dashboard panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// Enhanced parsing function to map Apify's dynamic payload structural states
+// Deep Search helper to find all Instagram CDN URLs inside a complex object
+function extractCdnUrls(obj, foundUrls = new Set()) {
+    if (!obj) return foundUrls;
+
+    if (typeof obj === 'string') {
+        // Look for typical Instagram CDN patterns
+        if (obj.includes('.cdninstagram.com') && (obj.startsWith('http://') || obj.startsWith('https://'))) {
+            // Clean unicode variants if present
+            const cleanUrl = obj.replace(/\\u0026/g, '&');
+            foundUrls.add(cleanUrl);
+        }
+    } else if (Array.isArray(obj)) {
+        for (const item of obj) {
+            extractCdnUrls(item, foundUrls);
+        }
+    } else if (typeof obj === 'object') {
+        for (const key in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                extractCdnUrls(obj[key], foundUrls);
+            }
+        }
+    }
+    return foundUrls;
+}
+
+// Extraction function using Apify's infrastructure
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please add your APIFY_TOKEN key inside Render environment variables.");
@@ -21,7 +46,8 @@ async function fetchInstagramMedia(url) {
     
     const targetApiUrl = "https://apify.com";
 
-    // Request full metadata data payload compilation via Apify runner infrastructure
+    console.log(`Sending API request to Apify for URL: ${url}`);
+    
     const response = await axios.post(
         targetApiUrl,
         {
@@ -30,77 +56,42 @@ async function fetchInstagramMedia(url) {
         },
         { 
             params: { token: APIFY_TOKEN },
-            headers: { 'Content-Type': 'application/json' } 
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 60000 // 60 seconds timeout for large story/carousel payloads
         }
     );
 
-    // Ensure we are working with a valid array object layout structure
-    let items = response.data;
-    if (!items) throw new Error("Empty response payload received from extraction engine.");
-    if (!Array.isArray(items)) items = [items];
-    if (items.length === 0) throw new Error("No payload blocks generated. Verify the link is public.");
-
-    // Target the first root data post node returned in the collection
-    const postData = items[0];
-    let mediaResults = [];
-
-    // Helper function to extract direct content link from variable naming scenarios
-    const extractUrl = (obj) => {
-        if (!obj) return null;
-        return obj.videoUrl || obj.video_url || obj.displayUrl || obj.display_url || obj.imageUrl;
-    };
-
-    // Scenario A: Nested Carousel/Child Post Collections (Multi-slide layout)
-    if (postData.childPosts && Array.isArray(postData.childPosts) && postData.childPosts.length > 0) {
-        mediaResults = postData.childPosts.map(child => {
-            const hasVideo = child.isVideo || !!child.videoUrl || !!child.video_url;
-            return {
-                type: hasVideo ? 'video' : 'image',
-                url: extractUrl(child)
-            };
-        });
-    } 
-    // Scenario B: Flat Array Image Collections
-    else if (postData.images && Array.isArray(postData.images) && postData.images.length > 0) {
-        mediaResults = postData.images.map(imgUrl => ({
-            type: 'image',
-            url: imgUrl
-        }));
-    }
-    // Scenario C: Single Video / Reel / Video Story
-    else if (postData.isVideo || postData.videoUrl || postData.video_url) {
-        mediaResults.push({
-            type: 'video',
-            url: extractUrl(postData)
-        });
-    } 
-    // Scenario D: Single Default Standard Graphic Photo/Story
-    else if (extractUrl(postData)) {
-        mediaResults.push({
-            type: 'image',
-            url: extractUrl(postData)
-        });
+    const dataPayload = response.data;
+    if (!dataPayload || (Array.isArray(dataPayload) && dataPayload.length === 0)) {
+        throw new Error("Empty response from Apify scraper. Check if the link is correct.");
     }
 
-    // Filter out items that resolved without a valid CDN source URL string
-    let cleanedResults = mediaResults.filter(item => item.url && item.url !== 'undefined');
+    // 1. Run our deep search scanner to extract all media assets
+    const uniqueUrls = Array.from(extractCdnUrls(dataPayload));
     
-    // Ultimate Fallback: Scrape via RegExp matching if structures shift entirely
-    if (cleanedResults.length === 0) {
-        const rawString = JSON.stringify(postData);
-        const videoMatch = rawString.match(/"videoUrl":"([^"]+)"/) || rawString.match(/"video_url":"([^"]+)"/);
-        const imageMatch = rawString.match(/"displayUrl":"([^"]+)"/) || rawString.match(/"display_url":"([^"]+)"/);
-        
-        if (videoMatch && videoMatch[1]) {
-            cleanedResults.push({ type: 'video', url: videoMatch[1].replace(/\\u0026/g, '&') });
-        } else if (imageMatch && imageMatch[1]) {
-            cleanedResults.push({ type: 'image', url: imageMatch[1].replace(/\\u0026/g, '&') });
-        }
-    }
-
-    if (cleanedResults.length === 0) {
+    if (uniqueUrls.length === 0) {
         throw new Error("No downloadable content detected. The post might be private, expired, or deleted.");
     }
+
+    // 2. Classify links into videos and images based on their file extensions/parameters
+    const mediaResults = uniqueUrls.map(cdnUrl => {
+        // Instagram videos usually contain .mp4, mp4=true, or specific path names
+        const isVideo = cdnUrl.includes('.mp4') || cdnUrl.includes('mp4=') || cdnUrl.includes('/v/');
+        return {
+            type: isVideo ? 'video' : 'image',
+            url: cdnUrl
+        };
+    });
+
+    // 3. Deduplicate elements to avoid rendering the exact same video thumbnail multiple times
+    const seenUrls = new Set();
+    const cleanedResults = mediaResults.filter(item => {
+        // Strip out dynamic tracking tokens to check for structural duplicates
+        const baseSignature = item.url.split('?')[0]; 
+        if (seenUrls.has(baseSignature)) return false;
+        seenUrls.add(baseSignature);
+        return true;
+    });
 
     return cleanedResults;
 }
