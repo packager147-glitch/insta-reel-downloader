@@ -18,14 +18,19 @@ async function fetchInstagramMedia(url) {
         throw new Error("API Token missing. Please add APIFY_TOKEN to Render environment variables.");
     }
     
-    // Using a robust, comprehensive Instagram Scraper Actor on Apify
+    // Explicit clean URL structure
+    const targetApiUrl = "https://apify.com";
+
     const response = await axios.post(
-        `https://apify.com{APIFY_TOKEN}`,
+        targetApiUrl,
         {
             "directUrls": [url],
             "resultsType": "details"
         },
-        { headers: { 'Content-Type': 'application/json' } }
+        { 
+            params: { token: APIFY_TOKEN }, // Passes token safely as a parameter string
+            headers: { 'Content-Type': 'application/json' } 
+        }
     );
 
     const items = response.data;
