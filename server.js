@@ -10,17 +10,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Fetch the secure token loaded in your Render Environment dashboard panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// Central parsing function using Apify's infrastructure
-// Central parsing function using Apify's infrastructure
+// Enhanced parsing function to map Apify's dynamic payload structural states
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
-        throw new Error("API Token missing. Please add APIFY_TOKEN to Render environment variables.");
+        throw new Error("API Token missing. Please add your APIFY_TOKEN key inside Render environment variables.");
     }
     
     const targetApiUrl = "https://apify.com";
 
+    // Request full metadata data payload compilation via Apify runner infrastructure
     const response = await axios.post(
         targetApiUrl,
         {
@@ -33,45 +34,78 @@ async function fetchInstagramMedia(url) {
         }
     );
 
-    const items = response.data;
-    if (!items || items.length === 0) {
-        throw new Error("No media found. Make sure the post/story is public.");
-    }
+    // Ensure we are working with a valid array object layout structure
+    let items = response.data;
+    if (!items) throw new Error("Empty response payload received from extraction engine.");
+    if (!Array.isArray(items)) items = [items];
+    if (items.length === 0) throw new Error("No payload blocks generated. Verify the link is public.");
 
-    // Apify wraps the dataset array, target the main baseline post
-    const postData = items[0]; 
+    // Target the first root data post node returned in the collection
+    const postData = items[0];
     let mediaResults = [];
 
-    // Scenario A: Carousel Post (Multiple elements)
-    if (postData.childPosts && postData.childPosts.length > 0) {
+    // Helper function to extract direct content link from variable naming scenarios
+    const extractUrl = (obj) => {
+        if (!obj) return null;
+        return obj.videoUrl || obj.video_url || obj.displayUrl || obj.display_url || obj.imageUrl;
+    };
+
+    // Scenario A: Nested Carousel/Child Post Collections (Multi-slide layout)
+    if (postData.childPosts && Array.isArray(postData.childPosts) && postData.childPosts.length > 0) {
         mediaResults = postData.childPosts.map(child => {
-            const isVideo = child.isVideo || !!child.videoUrl;
+            const hasVideo = child.isVideo || !!child.videoUrl || !!child.video_url;
             return {
-                type: isVideo ? 'video' : 'image',
-                url: child.videoUrl || child.video_url || child.displayUrl || child.display_url
+                type: hasVideo ? 'video' : 'image',
+                url: extractUrl(child)
             };
         });
     } 
-    // Scenario B: Single Video (Reels / Video Post / Video Story)
+    // Scenario B: Flat Array Image Collections
+    else if (postData.images && Array.isArray(postData.images) && postData.images.length > 0) {
+        mediaResults = postData.images.map(imgUrl => ({
+            type: 'image',
+            url: imgUrl
+        }));
+    }
+    // Scenario C: Single Video / Reel / Video Story
     else if (postData.isVideo || postData.videoUrl || postData.video_url) {
         mediaResults.push({
             type: 'video',
-            url: postData.videoUrl || postData.video_url || postData.displayUrl || postData.display_url
+            url: extractUrl(postData)
         });
     } 
-    // Scenario C: Single Image (Standard post or Image Story)
-    else {
+    // Scenario D: Single Default Standard Graphic Photo/Story
+    else if (extractUrl(postData)) {
         mediaResults.push({
             type: 'image',
-            url: postData.displayUrl || postData.display_url || postData.videoUrl || postData.video_url
+            url: extractUrl(postData)
         });
     }
 
-    // Filter out any entries where the URL extraction failed entirely
-    return mediaResults.filter(item => item.url !== undefined && item.url !== null);
+    // Filter out items that resolved without a valid CDN source URL string
+    let cleanedResults = mediaResults.filter(item => item.url && item.url !== 'undefined');
+    
+    // Ultimate Fallback: Scrape via RegExp matching if structures shift entirely
+    if (cleanedResults.length === 0) {
+        const rawString = JSON.stringify(postData);
+        const videoMatch = rawString.match(/"videoUrl":"([^"]+)"/) || rawString.match(/"video_url":"([^"]+)"/);
+        const imageMatch = rawString.match(/"displayUrl":"([^"]+)"/) || rawString.match(/"display_url":"([^"]+)"/);
+        
+        if (videoMatch && videoMatch[1]) {
+            cleanedResults.push({ type: 'video', url: videoMatch[1].replace(/\\u0026/g, '&') });
+        } else if (imageMatch && imageMatch[1]) {
+            cleanedResults.push({ type: 'image', url: imageMatch[1].replace(/\\u0026/g, '&') });
+        }
+    }
+
+    if (cleanedResults.length === 0) {
+        throw new Error("No downloadable content detected. The post might be private, expired, or deleted.");
+    }
+
+    return cleanedResults;
 }
 
-// Unified API Endpoint
+// Unified Download Extraction Request API Gateway Entry Point
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
@@ -79,50 +113,15 @@ app.post('/api/download', async (req, res) => {
     }
 
     try {
-        console.log(`Processing media request for: ${url}`);
+        console.log(`Processing media extraction query request for: ${url}`);
         const media = await fetchInstagramMedia(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`Extraction failed:`, error.message);
-        return res.status(500).json({ error: error.message || 'Failed to extract media content.' });
-    }
-});
-
-// New Proxy route to fix the "File wasn't available on site" Chrome error
-app.get('/api/proxy-download', async (req, res) => {
-    const mediaUrl = req.query.url;
-    const filename = req.query.filename || 'instagram_media.mp4';
-
-    if (!mediaUrl) {
-        return res.status(400).send('Missing media URL parameter.');
-    }
-
-    try {
-        console.log(`Streaming proxy download for URL: ${mediaUrl}`);
-        
-        // Fetch the file as an arraybuffer stream from Meta's CDN
-        const response = await axios({
-            method: 'get',
-            url: mediaUrl,
-            responseType: 'stream',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-        });
-
-        // Force Chrome to treat this as a solid filesystem download file
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
-
-        // Pipe the internal server incoming bytes directly to the client's browser response
-        response.data.pipe(res);
-
-    } catch (error) {
-        console.error('Error proxying media download:', error.message);
-        res.status(500).send('Could not fetch the media file payload from source.');
+        console.error(`Extraction engine execution failed:`, error.message);
+        return res.status(500).json({ error: error.message || 'Failed to extract media content payload structure.' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server successfully initialized and running on port ${PORT}`);
 });
