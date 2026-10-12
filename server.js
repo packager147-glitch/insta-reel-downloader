@@ -13,14 +13,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Fetch the secure token loaded in your Render Environment dashboard panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// Deep Search helper to find all Instagram CDN URLs inside a complex object
+// Deep Search scanner fallback function
 function extractCdnUrls(obj, foundUrls = new Set()) {
     if (!obj) return foundUrls;
 
     if (typeof obj === 'string') {
-        // Look for typical Instagram CDN patterns
         if (obj.includes('.cdninstagram.com') && (obj.startsWith('http://') || obj.startsWith('https://'))) {
-            // Clean unicode variants if present
             const cleanUrl = obj.replace(/\\u0026/g, '&');
             foundUrls.add(cleanUrl);
         }
@@ -38,65 +36,74 @@ function extractCdnUrls(obj, foundUrls = new Set()) {
     return foundUrls;
 }
 
-// Extraction function using Apify's infrastructure
+// Target extraction function using Apify's high-bypass Solo Video endpoint
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please add your APIFY_TOKEN key inside Render environment variables.");
     }
     
+    // Using the specialized high-bypass solo video details scraper endpoint
     const targetApiUrl = "https://apify.com";
 
-    console.log(`Sending API request to Apify for URL: ${url}`);
+    console.log(`Routing high-bypass proxy request to Apify for URL: ${url}`);
     
     const response = await axios.post(
         targetApiUrl,
         {
-            "directUrls": [url],
-            "resultsType": "details"
+            "url": url  // Target input configuration format required by the Solo scraper
         },
         { 
             params: { token: APIFY_TOKEN },
             headers: { 'Content-Type': 'application/json' },
-            timeout: 60000 // 60 seconds timeout for large story/carousel payloads
+            timeout: 60000 
         }
     );
 
-    const dataPayload = response.data;
-    if (!dataPayload || (Array.isArray(dataPayload) && dataPayload.length === 0)) {
-        throw new Error("Empty response from Apify scraper. Check if the link is correct.");
-    }
-
-    // 1. Run our deep search scanner to extract all media assets
-    const uniqueUrls = Array.from(extractCdnUrls(dataPayload));
+    const items = response.data;
     
-    if (uniqueUrls.length === 0) {
-        throw new Error("No downloadable content detected. The post might be private, expired, or deleted.");
+    // Check if the specialized scraper returned direct metadata variables
+    let mediaResults = [];
+    if (Array.isArray(items) && items.length > 0) {
+        const item = items[0];
+        
+        // Target explicit data property pathways returned by this specific actor
+        if (item.videoUrl || item.downloadUrl || item.directUrl) {
+            mediaResults.push({
+                type: 'video',
+                url: item.videoUrl || item.downloadUrl || item.directUrl
+            });
+        }
     }
 
-    // 2. Classify links into videos and images based on their file extensions/parameters
-    const mediaResults = uniqueUrls.map(cdnUrl => {
-        // Instagram videos usually contain .mp4, mp4=true, or specific path names
-        const isVideo = cdnUrl.includes('.mp4') || cdnUrl.includes('mp4=') || cdnUrl.includes('/v/');
-        return {
-            type: isVideo ? 'video' : 'image',
-            url: cdnUrl
-        };
-    });
+    // Fallback: If properties vary, use our deep search string scanner on the raw object block
+    if (mediaResults.length === 0) {
+        const uniqueUrls = Array.from(extractCdnUrls(items));
+        if (uniqueUrls.length > 0) {
+            mediaResults = uniqueUrls.map(cdnUrl => {
+                const isVideo = cdnUrl.includes('.mp4') || cdnUrl.includes('mp4=') || cdnUrl.includes('/v/');
+                return { type: isVideo ? 'video' : 'image', url: cdnUrl };
+            });
+        }
+    }
 
-    // 3. Deduplicate elements to avoid rendering the exact same video thumbnail multiple times
+    // De-duplicate URLs
     const seenUrls = new Set();
     const cleanedResults = mediaResults.filter(item => {
-        // Strip out dynamic tracking tokens to check for structural duplicates
+        if (!item.url) return false;
         const baseSignature = item.url.split('?')[0]; 
         if (seenUrls.has(baseSignature)) return false;
         seenUrls.add(baseSignature);
         return true;
     });
 
+    if (cleanedResults.length === 0) {
+        throw new Error("Meta blocked the scraper proxy pool. Please try extraction again in a few moments.");
+    }
+
     return cleanedResults;
 }
 
-// Unified Download Extraction Request API Gateway Entry Point
+// Unified Endpoint Gateway
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
@@ -104,12 +111,11 @@ app.post('/api/download', async (req, res) => {
     }
 
     try {
-        console.log(`Processing media extraction query request for: ${url}`);
         const media = await fetchInstagramMedia(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`Extraction engine execution failed:`, error.message);
-        return res.status(500).json({ error: error.message || 'Failed to extract media content payload structure.' });
+        console.error(`Extraction failed:`, error.message);
+        return res.status(500).json({ error: error.message || 'Failed to extract media content structure.' });
     }
 });
 
