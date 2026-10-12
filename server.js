@@ -18,6 +18,7 @@ function deepFindMediaUrls(obj, extracted = []) {
     if (!obj) return extracted;
 
     if (typeof obj === 'string') {
+        // If it's a valid link format containing standard video or image indicators
         if (obj.startsWith('http://') || obj.startsWith('https://')) {
             const isVideo = obj.includes('.mp4') || obj.includes('mp4=') || obj.includes('/v/') || obj.includes('video');
             const isImage = obj.includes('.jpg') || obj.includes('.jpeg') || obj.includes('.png') || obj.includes('.webp') || obj.includes('image');
@@ -25,7 +26,7 @@ function deepFindMediaUrls(obj, extracted = []) {
             if (isVideo || isImage) {
                 extracted.push({
                     type: isVideo ? 'video' : 'image',
-                    url: obj.replace(/\\u0026/g, '&')
+                    url: obj.replace(/\\u0026/g, '&') // Clean unicode formatting if present
                 });
             }
         }
@@ -48,13 +49,13 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
         throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
     }
 
-    console.log(`[FastSaver] Querying direct Instagram endpoint: ${instagramUrl}`);
+    console.log(`[FastSaver] Querying direct endpoint: ${instagramUrl}`);
 
-    const response = await axios.get('https://rapidapi.com', {
+    const response = await axios.get('https://instagram-tiktok-youtube-downloader.p.rapidapi.com/fetch', {
         params: { url: instagramUrl },
         headers: {
             'x-rapidapi-key': RAPIDAPI_KEY,
-            'x-rapidapi-host': '://rapidapi.com'
+            'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com'
         },
         timeout: 30000
     });
@@ -62,9 +63,11 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
     const data = response.data;
     if (!data) throw new Error("Empty response received from the API endpoint.");
 
+    console.log("[Raw API Response Payload Debug]:", JSON.stringify(data));
+
     let mediaResults = [];
 
-    // Primary property checking
+    // Approach 1: Try strict property checking based on documentation structures
     if (data.type === 'album' && Array.isArray(data.items)) {
         mediaResults = data.items.map(item => ({
             type: item.type === 'video' ? 'video' : 'image',
@@ -83,15 +86,17 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
         }
     }
 
-    // Failsafe Scanner fallback
-    if (mediaResults.length === 0) {
+    // Approach 2: Failsafe Scanner (If the keys mismatched, grab raw file links from the entire response)
+    if (mediaResults.length === 0 || !mediaResults[0].url) {
+        console.log("[Scanner] Strict keys empty. Booting fallback scanner...");
         mediaResults = deepFindMediaUrls(data);
     }
 
+    // Filter out duplicates and invalid strings cleanly
     const seenUrls = new Set();
     const finalCleaned = mediaResults.filter(item => {
         if (!item.url || typeof item.url !== 'string') return false;
-        const base = item.url.split('?');
+        const base = item.url.split('?')[0]; // Deduplicate matching objects
         if (seenUrls.has(base)) return false;
         seenUrls.add(base);
         return true;
@@ -104,7 +109,7 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
     return finalCleaned;
 }
 
-// Unified Metadata Retrieval API Endpoint
+// 1. Unified Metadata Retrieval API Endpoint
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
@@ -114,11 +119,12 @@ app.post('/api/download', async (req, res) => {
         const media = await fetchMediaViaAllInOneAPI(url);
         return res.json({ success: true, media });
     } catch (error) {
+        console.error(`Processing error stack:`, error.message);
         return res.status(500).json({ error: error.message });
     }
 });
 
-// STABLE FILE TUNNEL: Streams the target bytes straight onto your PC folder structure
+// 2. STABLE FILE TUNNEL: Streams the target bytes straight onto your device's filesystem folder structure
 app.get('/api/proxy-download', async (req, res) => {
     const targetMediaUrl = req.query.url;
     const clientFileName = req.query.filename || 'instagram_download.mp4';
@@ -126,6 +132,7 @@ app.get('/api/proxy-download', async (req, res) => {
     if (!targetMediaUrl) return res.status(400).send('Missing download parameters.');
 
     try {
+        console.log(`Piping direct local storage attachment download stream...`);
         const cdnResponse = await axios({
             method: 'get',
             url: targetMediaUrl,
@@ -135,6 +142,7 @@ app.get('/api/proxy-download', async (req, res) => {
             }
         });
 
+        // Force desktop browser download mechanics into your computer's local directory path
         res.setHeader('Content-Disposition', `attachment; filename="${clientFileName}"`);
         res.setHeader('Content-Type', cdnResponse.headers['content-type'] || 'application/octet-stream');
 
@@ -146,5 +154,5 @@ app.get('/api/proxy-download', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Instagram Downloader running successfully on port ${PORT}`);
+    console.log(`Server running successfully on port ${PORT}`);
 });
