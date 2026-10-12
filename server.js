@@ -13,65 +13,97 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Retrieve your free authentication key loaded inside your Render Environment panel
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
 
+// Failsafe deep scanner to find URLs in a complex object when keys mismatch
+function deepFindMediaUrls(obj, extracted = []) {
+    if (!obj) return extracted;
+
+    if (typeof obj === 'string') {
+        // If it's a valid link format containing standard video or image indicators
+        if (obj.startsWith('http://') || obj.startsWith('https://')) {
+            const isVideo = obj.includes('.mp4') || obj.includes('mp4=') || obj.includes('/v/') || obj.includes('video');
+            const isImage = obj.includes('.jpg') || obj.includes('.jpeg') || obj.includes('.png') || obj.includes('.webp') || obj.includes('image');
+            
+            if (isVideo || isImage) {
+                extracted.push({
+                    type: isVideo ? 'video' : 'image',
+                    url: obj.replace(/\\u0026/g, '&') // Clean unicode formatting if present
+                });
+            }
+        }
+    } else if (Array.isArray(obj)) {
+        for (const element of obj) {
+            deepFindMediaUrls(element, extracted);
+        }
+    } else if (typeof obj === 'object') {
+        for (const key in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                deepFindMediaUrls(obj[key], extracted);
+            }
+        }
+    }
+    return extracted;
+}
+
 async function fetchMediaViaAllInOneAPI(instagramUrl) {
     if (!RAPIDAPI_KEY) {
         throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
     }
 
-    console.log(`[FastSaver] Routing query to: ${instagramUrl}`);
+    console.log(`[FastSaver] Querying direct endpoint: ${instagramUrl}`);
 
-    // GET request to /fetch with encoded URL parameters per official documentation mapping rules
-    const response = await axios.get('https://rapidapi.com', {
+    const response = await axios.get('https://instagram-tiktok-youtube-downloader.p.rapidapi.com/fetch', {
         params: { url: instagramUrl },
         headers: {
             'x-rapidapi-key': RAPIDAPI_KEY,
             'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com'
         },
-        timeout: 30000 // 30 seconds execution limit
+        timeout: 30000
     });
 
     const data = response.data;
-    
-    // Log the structure directly inside your Render console to completely stop guesswork
-    console.log("[FastSaver Response Payload Summary]:", JSON.stringify(data));
+    if (!data) throw new Error("Empty response received from the API endpoint.");
 
-    if (!data) {
-        throw new Error("Empty response received from the API endpoint wrapper.");
-    }
+    console.log("[Raw API Response Payload Debug]:", JSON.stringify(data));
 
     let mediaResults = [];
 
-    // Target the primary payload collection array (FastSaver dynamic key structures)
-    const targetArray = data.url || data.items || data.album;
-
-    if (Array.isArray(targetArray) && targetArray.length > 0) {
-        mediaResults = targetArray.map(item => {
-            // Unpack dynamic variable properties safely
-            const directUrl = item.download_url || item.url || (typeof item === 'string' ? item : null);
-            const isVid = item.type === 'video' || (directUrl && directUrl.includes('.mp4'));
-            return {
-                type: isVid ? 'video' : 'image',
-                url: directUrl
-            };
-        });
-    } 
-    // Fallback Scenario B: Single direct output parameters at root object levels
-    else if (data.download_url || data.url) {
-        const directUrl = data.download_url || (typeof data.url === 'string' ? data.url : null);
-        if (directUrl) {
-            const isVid = data.type === 'video' || directUrl.includes('.mp4');
-            mediaResults.push({
-                type: isVid ? 'video' : 'image',
-                url: directUrl
-            });
+    // Approach 1: Try strict property checking based on documentation structures
+    if (data.type === 'album' && Array.isArray(data.items)) {
+        mediaResults = data.items.map(item => ({
+            type: item.type === 'video' ? 'video' : 'image',
+            url: item.download_url || item.url
+        }));
+    } else if (Array.isArray(data.url)) {
+        mediaResults = data.url.map(item => ({
+            type: (item.type === 'video' || (item.url && item.url.includes('.mp4'))) ? 'video' : 'image',
+            url: item.url || item.download_url || item
+        }));
+    } else if (data.download_url || data.url) {
+        const fallbackLink = data.download_url || data.url;
+        if (typeof fallbackLink === 'string') {
+            const isVid = data.type === 'video' || fallbackLink.includes('.mp4');
+            mediaResults.push({ type: isVid ? 'video' : 'image', url: fallbackLink });
         }
     }
 
-    // Filter out items that resolved without a direct source URL link string
-    const finalCleaned = mediaResults.filter(item => item.url && item.url !== 'undefined');
+    // Approach 2: Failsafe Scanner (If the keys mismatched, grab raw file links from the entire response)
+    if (mediaResults.length === 0 || !mediaResults[0].url) {
+        console.log("[Scanner] Strict keys empty. Booting fallback scanner...");
+        mediaResults = deepFindMediaUrls(data);
+    }
+
+    // Filter out duplicates and invalid strings cleanly
+    const seenUrls = new Set();
+    const finalCleaned = mediaResults.filter(item => {
+        if (!item.url || typeof item.url !== 'string') return false;
+        const base = item.url.split('?')[0]; // Deduplicate matching objects
+        if (seenUrls.has(base)) return false;
+        seenUrls.add(base);
+        return true;
+    });
 
     if (finalCleaned.length === 0) {
-        throw new Error("The API processed smoothly but our server script couldn't isolate the download fields inside the JSON block. Check your Render logs.");
+        throw new Error("Could not parse media components out of the API response structure.");
     }
 
     return finalCleaned;
@@ -83,29 +115,24 @@ app.post('/api/download', async (req, res) => {
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
         return res.status(400).json({ error: 'Please provide a valid Instagram link.' });
     }
-
     try {
         const media = await fetchMediaViaAllInOneAPI(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`FastSaver Processing Failure:`, error.message);
+        console.error(`Processing error stack:`, error.message);
         return res.status(500).json({ error: error.message });
     }
 });
 
-// 2. FILE PROXY TUNNEL: Pulls raw file bytes down onto server and pipes them as attachment to PC downloads folder
+// 2. STABLE FILE TUNNEL: Streams the target bytes straight onto your device's filesystem folder structure
 app.get('/api/proxy-download', async (req, res) => {
     const targetMediaUrl = req.query.url;
     const clientFileName = req.query.filename || 'instagram_download.mp4';
 
-    if (!targetMediaUrl) {
-        return res.status(400).send('Missing download source URL parameter.');
-    }
+    if (!targetMediaUrl) return res.status(400).send('Missing download parameters.');
 
     try {
-        console.log(`Streaming file payload from CDN source: ${targetMediaUrl}`);
-        
-        // Fetch raw asset byte data directly from Facebook CDN as a stream
+        console.log(`Piping direct local storage attachment download stream...`);
         const cdnResponse = await axios({
             method: 'get',
             url: targetMediaUrl,
@@ -115,19 +142,17 @@ app.get('/api/proxy-download', async (req, res) => {
             }
         });
 
-        // Set attachment layouts to force local file generation instead of web routing
+        // Force desktop browser download mechanics into your computer's local directory path
         res.setHeader('Content-Disposition', `attachment; filename="${clientFileName}"`);
         res.setHeader('Content-Type', cdnResponse.headers['content-type'] || 'application/octet-stream');
 
-        // Pipe streaming incoming data seamlessly straight into browser response down onto computer drive
         cdnResponse.data.pipe(res);
-
     } catch (error) {
-        console.error('Proxy attachment pipeline stream failure:', error.message);
-        res.status(500).send('Could not package file bytes into attachment stream.');
+        console.error('File stream pipeline failure:', error.message);
+        res.status(500).send('Could not compile local media bytes bundle.');
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server successfully initialized and running on port ${PORT}`);
+    console.log(`Server running successfully on port ${PORT}`);
 });
