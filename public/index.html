@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal Video Downloader</title>
+    <title>Instagram Downloader</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); width: 100%; max-width: 500px; text-align: center; border: 1px solid #dbdbdb; }
         h1 { color: #262626; font-size: 26px; margin: 0 0 6px 0; font-weight: 700; }
         p.subtitle { color: #8e8e8e; font-size: 14px; margin: 0 0 24px 0; }
-        .input-container { display: flex; gap: 8px; margin-bottom: 15px; position: relative; }
+        .input-container { display: flex; gap: 8px; margin-bottom: 15px; }
         input { flex: 1; padding: 14px 12px; border: 1px solid #dbdbdb; border-radius: 8px; box-sizing: border-box; font-size: 14px; background: #fafafa; transition: all 0.2s ease; }
         input:focus { outline: none; border-color: #a8a8a8; background: white; }
-        .paste-btn { padding: 0 14px; background-color: #efefef; border: 1px solid #dbdbdb; border-radius: 8px; color: #262626; font-weight: 600; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+        .paste-btn { padding: 0 16px; background-color: #efefef; border: 1px solid #dbdbdb; border-radius: 8px; color: #262626; font-weight: 600; font-size: 13px; cursor: pointer; transition: background 0.2s; }
         .paste-btn:hover { background-color: #e2e2e2; }
         .action-btn { width: 100%; padding: 14px; background-color: #0095f6; border: none; border-radius: 8px; color: white; font-weight: bold; font-size: 14px; cursor: pointer; transition: background-color 0.2s ease; }
         .action-btn:hover { background-color: #1877f2; }
@@ -28,11 +28,11 @@
 <body>
 
 <div class="card">
-    <h1>Universal Downloader</h1>
-    <p class="subtitle">Supports Instagram Reels, YouTube Shorts & TikTok</p>
+    <h1>Instagram Downloader</h1>
+    <p class="subtitle">Extract Reels, Carousel Images, Posts & Stories</p>
     
     <div class="input-container">
-        <input type="text" id="urlInput" placeholder="Paste link here..." />
+        <input type="text" id="urlInput" placeholder="Paste Instagram link here..." />
         <button class="paste-btn" onclick="pasteFromClipboard()">Paste</button>
     </div>
     
@@ -42,13 +42,13 @@
 </div>
 
 <script>
-    // Native system clipboard pasting shortcut
+    // System clipboard link grabbing handler
     async function pasteFromClipboard() {
         try {
             const text = await navigator.clipboard.readText();
             document.getElementById('urlInput').value = text;
         } catch (err) {
-            alert("Clipboard permission denied. Please paste your link manually into the box.");
+            console.warn("Clipboard access blocked by browser privacy controls.");
         }
     }
 
@@ -62,13 +62,13 @@
         resultContainer.innerHTML = '';
 
         if (!urlInput) {
-            errorMsg.innerText = 'Please input a valid URL.';
+            errorMsg.innerText = 'Please paste a valid link.';
             errorMsg.style.display = 'block';
             return;
         }
 
         fetchBtn.disabled = true;
-        fetchBtn.innerText = 'Extracting media elements...';
+        fetchBtn.innerText = 'Extracting content stream...';
 
         try {
             const response = await fetch('/api/download', {
@@ -83,8 +83,8 @@
                     const itemDiv = document.createElement('div');
                     itemDiv.className = 'media-item';
 
-                    const extension = item.type === 'video' ? 'mp4' : 'jpg';
-                    const filename = `download_${item.type}_${Date.now()}_${index + 1}.${extension}`;
+                    const fileExtension = item.type === 'video' ? 'mp4' : 'jpg';
+                    const filename = `instagram_${item.type}_${Date.now()}_${index + 1}.${fileExtension}`;
                     const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(filename)}`;
 
                     if (item.type === 'video') {
@@ -94,18 +94,18 @@
                         `;
                     } else {
                         itemDiv.innerHTML = `
-                            <img class="media-preview" src="${item.url}" alt="Preview Frame" />
+                            <img class="media-preview" src="${item.url}" alt="Preview" />
                             <a class="download-link" href="${proxyUrl}">Download Image File</a>
                         `;
                     }
                     resultContainer.appendChild(itemDiv);
                 });
             } else {
-                errorMsg.innerText = data.error || 'Could not find media content links.';
+                errorMsg.innerText = data.error || 'No downloadable content detected.';
                 errorMsg.style.display = 'block';
             }
         } catch (err) {
-            errorMsg.innerText = 'Connection timed out during server side processing.';
+            errorMsg.innerText = 'Server extraction fault occurred.';
             errorMsg.style.display = 'block';
         } finally {
             fetchBtn.disabled = false;
