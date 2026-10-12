@@ -13,63 +13,50 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Retrieve your free authentication key loaded inside your Render Environment panel
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
 
-async function fetchMediaViaRapidAPI(instagramUrl) {
+async function fetchMediaViaAllInOneAPI(instagramUrl) {
     if (!RAPIDAPI_KEY) {
         throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
     }
 
-    // Clean URL query parameters out to standardize data routing
-    const targetUrl = instagramUrl.split('?')[0];
+    console.log(`Routing clean JSON payload via All-In-One API gateway for: ${instagramUrl}`);
 
-    console.log(`Bypassing scraper blockades. Routing connection query via RapidAPI layer for: ${targetUrl}`);
-
-    // Build the specific form-data configuration payload expected by the API endpoint
-    const formParams = new URLSearchParams();
-    formParams.append('url', targetUrl);
-
-    const response = await axios.post('https://instagram-video-downloader13.p.rapidapi.com/index.php', formParams, {
-        headers: {
-            'x-rapidapi-key': RAPIDAPI_KEY,
-            'x-rapidapi-host': 'instagram-video-downloader13.p.rapidapi.com',
-            'content-type': 'application/x-www-form-urlencoded'
+    // This premium engine accepts clean JSON bodies via standard POST requests
+    const response = await axios.post(
+        'https://rapidapi.com',
+        { 
+            url: instagramUrl 
         },
-        timeout: 25000
-    });
+        {
+            headers: {
+                'x-rapidapi-key': RAPIDAPI_KEY,
+                'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com',
+                'content-type': 'application/json'
+            },
+            timeout: 30000 // 30 seconds execution limit
+        }
+    );
 
     const data = response.data;
     
-    // Check if the endpoint explicitly rejected validation structures
-    if (!data || data.status !== 'success') {
-        throw new Error(data.message || "The network engine failed to pull active public media assets for this URL.");
+    // Validate that data objects were successfully unpacked
+    if (!data || !data.media || !Array.isArray(data.media) || data.media.length === 0) {
+        throw new Error("The API engine could not find any active public media structures for this URL.");
     }
 
-    let mediaResults = [];
-
-    // Map single files or nested media items depending on what the API outputs
-    if (Array.isArray(data.media) && data.media.length > 0) {
-        mediaResults = data.media.map(item => {
-            const isVid = item.type === 'video' || item.url.includes('.mp4');
-            return {
-                type: isVid ? 'video' : 'image',
-                url: item.url
-            };
-        });
-    } else if (data.url) {
-        const isVid = data.url.includes('.mp4');
-        mediaResults.push({
+    // Map platform parameters directly to our clean frontend layout rules
+    const mediaResults = data.media.map(item => {
+        // Evaluates item types directly (video, image)
+        const isVid = item.type === 'video' || (item.url && item.url.includes('.mp4'));
+        return {
             type: isVid ? 'video' : 'image',
-            url: data.url
-        });
-    }
-
-    if (mediaResults.length === 0) {
-        throw new Error("Extraction complete, but no direct video or graphic links were found.");
-    }
+            url: item.url || item.download_url
+        };
+    });
 
     return mediaResults;
 }
 
-// Main Endpoint Gateway
+// Unified Download API Endpoint Gateway
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
@@ -77,10 +64,10 @@ app.post('/api/download', async (req, res) => {
     }
 
     try {
-        const media = await fetchMediaViaRapidAPI(url);
+        const media = await fetchMediaViaAllInOneAPI(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`RapidAPI Execution Failure:`, error.message);
+        console.error(`API Execution Failure:`, error.message);
         return res.status(500).json({ error: error.message });
     }
 });
