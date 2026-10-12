@@ -83,6 +83,41 @@ app.post('/api/download', async (req, res) => {
     }
 });
 
+// New Proxy route to fix the "File wasn't available on site" Chrome error
+app.get('/api/proxy-download', async (req, res) => {
+    const mediaUrl = req.query.url;
+    const filename = req.query.filename || 'instagram_media.mp4';
+
+    if (!mediaUrl) {
+        return res.status(400).send('Missing media URL parameter.');
+    }
+
+    try {
+        console.log(`Streaming proxy download for URL: ${mediaUrl}`);
+        
+        // Fetch the file as an arraybuffer stream from Meta's CDN
+        const response = await axios({
+            method: 'get',
+            url: mediaUrl,
+            responseType: 'stream',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
+
+        // Force Chrome to treat this as a solid filesystem download file
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
+
+        // Pipe the internal server incoming bytes directly to the client's browser response
+        response.data.pipe(res);
+
+    } catch (error) {
+        console.error('Error proxying media download:', error.message);
+        res.status(500).send('Could not fetch the media file payload from source.');
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
