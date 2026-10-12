@@ -3,30 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Instagram Reel Downloader</title>
+    <title>Ultimate Instagram Downloader</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #fafafa; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 450px; text-align: center; }
-        h1 { color: #262626; font-size: 24px; margin-bottom: 20px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #fafafa; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 500px; text-align: center; }
+        h1 { color: #262626; font-size: 24px; margin-bottom: 8px; }
+        p.subtitle { color: #8e8e8e; font-size: 14px; margin-bottom: 20px; }
         input { width: 100%; padding: 12px; border: 1px solid #dbdbdb; border-radius: 6px; box-sizing: border-box; font-size: 14px; margin-bottom: 15px; }
         button { width: 100%; padding: 12px; background-color: #0095f6; border: none; border-radius: 6px; color: white; font-weight: bold; font-size: 14px; cursor: pointer; }
         button:disabled { background-color: #b2dffc; }
-        .result { margin-top: 20px; display: none; }
         .error { color: #ed4956; margin-top: 15px; font-size: 14px; }
-        .download-btn { display: inline-block; padding: 10px 20px; background-color: #34a853; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 10px; }
+        .result-container { margin-top: 20px; text-align: left; max-height: 400px; overflow-y: auto; padding-right: 5px; }
+        .media-item { background: #f1f1f1; padding: 10px; border-radius: 8px; margin-bottom: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .media-preview { max-width: 100%; max-height: 200px; border-radius: 4px; object-fit: contain; }
+        .download-btn { display: block; width: 90%; text-align: center; padding: 8px 0; background-color: #34a853; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h1>Insta Reel Downloader</h1>
-    <input type="text" id="urlInput" placeholder="Paste your Instagram Reel link here..." />
-    <button id="fetchBtn" onclick="handleDownload()">Get Download Link</button>
+    <h1>Insta Multi-Downloader</h1>
+    <p class="subtitle">Supports Reels, Carousels, Posts & Stories</p>
+    <input type="text" id="urlInput" placeholder="Paste Reel, Post, Carousel, or Story link..." />
+    <button id="fetchBtn" onclick="handleDownload()">Extract Media</button>
     <div id="errorMsg" class="error"></div>
-    <div id="resultBlock" class="result">
-        <p>🎉 Your video is ready!</p>
-        <a id="downloadLink" class="download-btn" href="#" target="_blank" download="reel.mp4">Download MP4 Video</a>
-    </div>
+    <div id="resultContainer" class="result-container"></div>
 </div>
 
 <script>
@@ -34,19 +35,18 @@
         const urlInput = document.getElementById('urlInput').value.trim();
         const fetchBtn = document.getElementById('fetchBtn');
         const errorMsg = document.getElementById('errorMsg');
-        const resultBlock = document.getElementById('resultBlock');
-        const downloadLink = document.getElementById('downloadLink');
+        const resultContainer = document.getElementById('resultContainer');
 
         errorMsg.innerText = '';
-        resultBlock.style.display = 'none';
+        resultContainer.innerHTML = '';
 
         if (!urlInput) {
-            errorMsg.innerText = 'Please paste a valid URL.';
+            errorMsg.innerText = 'Please paste a valid link.';
             return;
         }
 
         fetchBtn.disabled = true;
-        fetchBtn.innerText = 'Processing...';
+        fetchBtn.innerText = 'Extracting content...';
 
         try {
             const response = await fetch('/api/download', {
@@ -56,17 +56,33 @@
             });
             const data = await response.json();
 
-            if (data.success) {
-                downloadLink.href = data.downloadUrl;
-                resultBlock.style.display = 'block';
+            if (data.success && data.media.length > 0) {
+                data.media.forEach((item, index) => {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'media-item';
+
+                    // Generate appropriate visual previews
+                    if (item.type === 'video') {
+                        itemDiv.innerHTML = `
+                            <video class="media-preview" src="${item.url}" controls></video>
+                            <a class="download-btn" href="${item.url}" target="_blank" download="instagram_video_${index+1}.mp4">Download Video #${index+1}</a>
+                        `;
+                    } else {
+                        itemDiv.innerHTML = `
+                            <img class="media-preview" src="${item.url}" alt="Preview" />
+                            <a class="download-btn" href="${item.url}" target="_blank" download="instagram_image_${index+1}.jpg">Download Image #${index+1}</a>
+                        `;
+                    }
+                    resultContainer.appendChild(itemDiv);
+                });
             } else {
-                errorMsg.innerText = data.error || 'Something went wrong.';
+                errorMsg.innerText = data.error || 'No downloadable content detected.';
             }
         } catch (err) {
-            errorMsg.innerText = 'Failed to connect to the server.';
+            errorMsg.innerText = 'Failed to process request. Make sure your environment variables are configured on Render.';
         } finally {
             fetchBtn.disabled = false;
-            fetchBtn.innerText = 'Get Download Link';
+            fetchBtn.innerText = 'Extract Media';
         }
     }
 </script>
