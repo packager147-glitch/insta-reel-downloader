@@ -13,113 +13,80 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Secure token loaded via the Render Environment configuration panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// Deep scanning utility to pull hidden CDN URLs if structural object maps vary
-function deepExtractCdnUrls(obj, collection = new Set()) {
-    if (!obj) return collection;
-    if (typeof obj === 'string') {
-        if (obj.includes('.cdninstagram.com') && (obj.startsWith('http://') || obj.startsWith('https://'))) {
-            collection.add(obj.replace(/\\u0026/g, '&'));
-        }
-    } else if (Array.isArray(obj)) {
-        for (const element of obj) deepExtractCdnUrls(element, collection);
-    } else if (typeof obj === 'object') {
-        for (const key in obj) {
-            if (Object.prototype.hasOwnProperty.call(obj, key)) deepExtractCdnUrls(obj[key], collection);
-        }
-    }
-    return collection;
-}
-
-// Engine 1: Dedicated SnapCDN Downloader Actor
-async function trySnapCdnEngine(url) {
-    const targetApiUrl = `https://apify.com`;
-    const response = await axios.post(targetApiUrl, { "url": url }, {
-        params: { token: APIFY_TOKEN },
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30000
-    });
-
-    const dataItems = response.data;
-    if (!dataItems || !Array.isArray(dataItems) || dataItems.length === 0) return null;
-    
-    const resultItem = dataItems[0];
-    if (!resultItem.result || !Array.isArray(resultItem.result) || resultItem.result.length === 0) return null;
-
-    return resultItem.result.map(item => {
-        const isVideo = item.type === 'video' || item.url.includes('.mp4') || item.url.includes('mp4=');
-        return { type: isVideo ? 'video' : 'image', url: item.url };
-    });
-}
-
-// Engine 2: High-Success Core Scraper Node Fallback
-async function tryCoreScraperEngine(url) {
-    const targetApiUrl = `https://apify.com`;
-    const response = await axios.post(targetApiUrl, {
-        "directUrls": [url],
-        "resultsType": "details"
-    }, {
-        params: { token: APIFY_TOKEN },
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 40000
-    });
-
-    const items = response.data;
-    if (!items || !Array.isArray(items) || items.length === 0) return null;
-
-    const postData = items[0];
-    let foundUrls = [];
-
-    // Check common payload data properties directly
-    if (postData.childPosts && postData.childPosts.length > 0) {
-        foundUrls = postData.childPosts.map(c => c.videoUrl || c.displayUrl);
-    } else {
-        const singleUrl = postData.videoUrl || postData.displayUrl || postData.imageUrl;
-        if (singleUrl) foundUrls.push(singleUrl);
-    }
-
-    // Use deep search string fallback scanner if keys are empty
-    if (foundUrls.length === 0) {
-        foundUrls = Array.from(deepExtractCdnUrls(items));
-    }
-
-    if (foundUrls.length === 0) return null;
-
-    return foundUrls.map(cdnUrl => {
-        const isVideo = cdnUrl.includes('.mp4') || cdnUrl.includes('mp4=') || cdnUrl.includes('/v/');
-        return { type: isVideo ? 'video' : 'image', url: cdnUrl };
-    });
-}
-
-// Central Media Coordinator
+// Central parsing function utilizing Apify's Premium Core Post Scraper
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please check your APIFY_TOKEN key configuration inside Render.");
     }
+    
+    // Clean the URL structure to ensure consistency
+    let cleanUrl = url.split('?')[0];
+    if (!cleanUrl.endsWith('/')) cleanUrl += '/';
 
-    // Clean URL string structures to drop extra tracking strings
-    let targetUrl = url.split('?')[0];
-    if (!targetUrl.endsWith('/')) targetUrl += '/';
+    // Target the premium core post scraper runner endpoint
+    const targetApiUrl = "https://apify.com";
 
-    console.log(`Running primary SnapCDN Engine for: ${targetUrl}`);
-    try {
-        const primaryResults = await trySnapCdnEngine(targetUrl);
-        if (primaryResults && primaryResults.length > 0) return primaryResults;
-    } catch (e) {
-        console.warn(`Primary Engine failed: ${e.message}. Dropping to Fallback Engine...`);
+    console.log(`Routing premium core high-bypass scraper request for URL: ${cleanUrl}`);
+    
+    // The core actor takes an array of direct URLs and isolates data points
+    const response = await axios.post(
+        targetApiUrl,
+        {
+            "directUrls": [cleanUrl],
+            "resultsType": "details"
+        },
+        { 
+            params: { token: APIFY_TOKEN },
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 60000 // Extended timeout to allow proxy handshakes to complete
+        }
+    );
+
+    const datasetItems = response.data;
+    if (!datasetItems || !Array.isArray(datasetItems) || datasetItems.length === 0) {
+        throw new Error("Instagram blocked the scraper connection pool. Please try extraction again in a moment.");
     }
 
-    console.log(`Running core scraper fallback engine routing...`);
-    try {
-        const fallbackResults = await tryCoreScraperEngine(targetUrl);
-        if (fallbackResults && fallbackResults.length > 0) return fallbackResults;
-    } catch (e) {
-        console.error(`Fallback Engine error payload context: ${e.message}`);
+    // Extract the primary data node block
+    const postData = datasetItems[0];
+    let mediaResults = [];
+
+    // Case 1: Carousel / Multi-slide posts
+    if (postData.childPosts && Array.isArray(postData.childPosts) && postData.childPosts.length > 0) {
+        mediaResults = postData.childPosts.map(child => {
+            const isVid = child.isVideo || !!child.videoUrl;
+            return {
+                type: isVid ? 'video' : 'image',
+                url: child.videoUrl || child.displayUrl
+            };
+        });
+    } 
+    // Case 2: Single Reel or Video Post
+    else if (postData.isVideo || postData.videoUrl) {
+        mediaResults.push({
+            type: 'video',
+            url: postData.videoUrl || postData.displayUrl
+        });
+    } 
+    // Case 3: Single Image / Photo Post
+    else if (postData.displayUrl || postData.imageUrl) {
+        mediaResults.push({
+            type: 'image',
+            url: postData.displayUrl || postData.imageUrl
+        });
     }
 
-    throw new Error("Both extraction engines returned empty metrics. Ensure the post link is public and accessible.");
+    // Clean up empty parameters and deduplicate the extracted link strings
+    const finalCleaned = mediaResults.filter(item => item.url);
+
+    if (finalCleaned.length === 0) {
+        throw new Error("Could not extract any direct media links from the post metadata.");
+    }
+
+    return finalCleaned;
 }
 
-// Unified API Endpoint Gateway
+// Unified Download API Endpoint Gateway
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
@@ -130,6 +97,7 @@ app.post('/api/download', async (req, res) => {
         const media = await fetchInstagramMedia(url);
         return res.json({ success: true, media });
     } catch (error) {
+        console.error(`Premium Scraper Failed:`, error.message);
         return res.status(500).json({ error: error.message });
     }
 });
