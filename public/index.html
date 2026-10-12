@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instagram Reel Downloader</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #fafafa; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 450px; text-align: center; }
+        h1 { color: #262626; font-size: 24px; margin-bottom: 20px; }
+        input { width: 100%; padding: 12px; border: 1px solid #dbdbdb; border-radius: 6px; box-sizing: border-box; font-size: 14px; margin-bottom: 15px; }
+        button { width: 100%; padding: 12px; background-color: #0095f6; border: none; border-radius: 6px; color: white; font-weight: bold; font-size: 14px; cursor: pointer; }
+        button:disabled { background-color: #b2dffc; }
+        .result { margin-top: 20px; display: none; }
+        .error { color: #ed4956; margin-top: 15px; font-size: 14px; }
+        .download-btn { display: inline-block; padding: 10px 20px; background-color: #34a853; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Insta Reel Downloader</h1>
+    <input type="text" id="urlInput" placeholder="Paste your Instagram Reel link here..." />
+    <button id="fetchBtn" onclick="handleDownload()">Get Download Link</button>
+    <div id="errorMsg" class="error"></div>
+    <div id="resultBlock" class="result">
+        <p>🎉 Your video is ready!</p>
+        <a id="downloadLink" class="download-btn" href="#" target="_blank" download="reel.mp4">Download MP4 Video</a>
+    </div>
+</div>
+
+<script>
+    async function handleDownload() {
+        const urlInput = document.getElementById('urlInput').value.trim();
+        const fetchBtn = document.getElementById('fetchBtn');
+        const errorMsg = document.getElementById('errorMsg');
+        const resultBlock = document.getElementById('resultBlock');
+        const downloadLink = document.getElementById('downloadLink');
+
+        errorMsg.innerText = '';
+        resultBlock.style.display = 'none';
+
+        if (!urlInput) {
+            errorMsg.innerText = 'Please paste a valid URL.';
+            return;
+        }
+
+        fetchBtn.disabled = true;
+        fetchBtn.innerText = 'Processing...';
+
+        try {
+            const response = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: urlInput })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                downloadLink.href = data.downloadUrl;
+                resultBlock.style.display = 'block';
+            } else {
+                errorMsg.innerText = data.error || 'Something went wrong.';
+            }
+        } catch (err) {
+            errorMsg.innerText = 'Failed to connect to the server.';
+        } finally {
+            fetchBtn.disabled = false;
+            fetchBtn.innerText = 'Get Download Link';
+        }
+    }
+</script>
+</body>
+</html>
