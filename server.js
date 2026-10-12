@@ -18,10 +18,10 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
         throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
     }
 
-    console.log(`Routing corrected GET query to FastSaver endpoint for: ${instagramUrl}`);
+    console.log(`Routing clean GET query to FastSaver endpoint for: ${instagramUrl}`);
 
-    // Official documentation routing mapping rules: GET request to /fetch
-    const response = await axios.get('https://rapidapi.com', {
+    // Official documentation mapping: GET request to /fetch with encoded URL parameters
+    const response = await axios.get('https://instagram-tiktok-youtube-downloader.p.rapidapi.com/fetch', {
         params: { url: instagramUrl },
         headers: {
             'x-rapidapi-key': RAPIDAPI_KEY,
@@ -38,9 +38,9 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
 
     let mediaResults = [];
 
-    // Scenario A: Carousel Post layouts (API packages these under data.type === 'album')
-    if (data.type === 'album' && Array.isArray(data.album)) {
-        mediaResults = data.album.map(item => ({
+    // Scenario A: Carousel Post layouts (Official API structure: type === 'album' containing an items array)
+    if (data.type === 'album' && Array.isArray(data.items)) {
+        mediaResults = data.items.map(item => ({
             type: item.type === 'video' ? 'video' : 'image',
             url: item.download_url
         }));
@@ -64,7 +64,7 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
     const finalCleaned = mediaResults.filter(item => item.url);
 
     if (finalCleaned.length === 0) {
-        throw new Error("API processed smoothly but could not extract active public download URLs from this post.");
+        throw new Error("API processed smoothly but could not map active public download URLs from this post type.");
     }
 
     return finalCleaned;
