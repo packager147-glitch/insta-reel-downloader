@@ -13,12 +13,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
 // Central parsing function using Apify's infrastructure
+// Central parsing function using Apify's infrastructure
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please add APIFY_TOKEN to Render environment variables.");
     }
     
-    // Explicit clean URL structure
     const targetApiUrl = "https://apify.com";
 
     const response = await axios.post(
@@ -28,7 +28,7 @@ async function fetchInstagramMedia(url) {
             "resultsType": "details"
         },
         { 
-            params: { token: APIFY_TOKEN }, // Passes token safely as a parameter string
+            params: { token: APIFY_TOKEN },
             headers: { 'Content-Type': 'application/json' } 
         }
     );
@@ -38,32 +38,37 @@ async function fetchInstagramMedia(url) {
         throw new Error("No media found. Make sure the post/story is public.");
     }
 
-    const postData = items[0];
+    // Apify wraps the dataset array, target the main baseline post
+    const postData = items[0]; 
     let mediaResults = [];
 
-    // Scenario A: Carousel Post (Multiple images/videos)
+    // Scenario A: Carousel Post (Multiple elements)
     if (postData.childPosts && postData.childPosts.length > 0) {
-        mediaResults = postData.childPosts.map(child => ({
-            type: child.type || (child.isVideo ? 'video' : 'image'),
-            url: child.videoUrl || child.displayUrl
-        }));
+        mediaResults = postData.childPosts.map(child => {
+            const isVideo = child.isVideo || !!child.videoUrl;
+            return {
+                type: isVideo ? 'video' : 'image',
+                url: child.videoUrl || child.video_url || child.displayUrl || child.display_url
+            };
+        });
     } 
-    // Scenario B: Single Video (Reel/Video Post/Video Story)
-    else if (postData.isVideo || postData.videoUrl) {
+    // Scenario B: Single Video (Reels / Video Post / Video Story)
+    else if (postData.isVideo || postData.videoUrl || postData.video_url) {
         mediaResults.push({
             type: 'video',
-            url: postData.videoUrl || postData.displayUrl
+            url: postData.videoUrl || postData.video_url || postData.displayUrl || postData.display_url
         });
     } 
     // Scenario C: Single Image (Standard post or Image Story)
     else {
         mediaResults.push({
             type: 'image',
-            url: postData.displayUrl
+            url: postData.displayUrl || postData.display_url || postData.videoUrl || postData.video_url
         });
     }
 
-    return mediaResults;
+    // Filter out any entries where the URL extraction failed entirely
+    return mediaResults.filter(item => item.url !== undefined && item.url !== null);
 }
 
 // Unified API Endpoint
