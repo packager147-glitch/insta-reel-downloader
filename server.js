@@ -18,71 +18,83 @@ async function fetchMediaViaAllInOneAPI(instagramUrl) {
         throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
     }
 
-    console.log(`Routing clean GET query to FastSaver endpoint for: ${instagramUrl}`);
+    console.log(`Routing corrected GET query to FastSaver endpoint for: ${instagramUrl}`);
 
-    // Official documentation mapping: GET request to /fetch with encoded URL parameters
-    const response = await axios.get('https://instagram-tiktok-youtube-downloader.p.rapidapi.com/fetch', {
+    const response = await axios.get('https://rapidapi.com', {
         params: { url: instagramUrl },
         headers: {
             'x-rapidapi-key': RAPIDAPI_KEY,
-            'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com'
+            'x-rapidapi-host': '://rapidapi.com'
         },
-        timeout: 30000 // 30 seconds execution limit
+        timeout: 30000
     });
 
     const data = response.data;
-    
-    if (!data) {
-        throw new Error("Empty response received from the API endpoint wrapper.");
-    }
+    if (!data) throw new Error("Empty response received from the API endpoint wrapper.");
 
     let mediaResults = [];
 
-    // Scenario A: Carousel Post layouts (Official API structure: type === 'album' containing an items array)
     if (data.type === 'album' && Array.isArray(data.items)) {
         mediaResults = data.items.map(item => ({
             type: item.type === 'video' ? 'video' : 'image',
             url: item.download_url
         }));
-    } 
-    // Scenario B: Single Video / Reel post format
-    else if (data.type === 'video' && data.download_url) {
-        mediaResults.push({
-            type: 'video',
-            url: data.download_url
-        });
-    } 
-    // Scenario C: Single Default Static Image format
-    else if (data.type === 'image' && data.download_url) {
-        mediaResults.push({
-            type: 'image',
-            url: data.download_url
-        });
+    } else if (data.type === 'video' && data.download_url) {
+        mediaResults.push({ type: 'video', url: data.download_url });
+    } else if (data.type === 'image' && data.download_url) {
+        mediaResults.push({ type: 'image', url: data.download_url });
     }
 
-    // Filter out items that resolved without a direct source URL link string
-    const finalCleaned = mediaResults.filter(item => item.url);
-
-    if (finalCleaned.length === 0) {
-        throw new Error("API processed smoothly but could not map active public download URLs from this post type.");
-    }
-
-    return finalCleaned;
+    return mediaResults.filter(item => item.url);
 }
 
-// Unified Download API Endpoint Gateway
+// 1. Unified Metadata Retrieval API Endpoint
 app.post('/api/download', async (req, res) => {
     const { url } = req.body;
     if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
         return res.status(400).json({ error: 'Please provide a valid Instagram link.' });
     }
-
     try {
         const media = await fetchMediaViaAllInOneAPI(url);
         return res.json({ success: true, media });
     } catch (error) {
         console.error(`FastSaver API Processing Fault:`, error.message);
         return res.status(500).json({ error: error.message });
+    }
+});
+
+// 2. NEW PROXY ROUTE: Downloads data on server and forces direct browser attachment download to PC folder
+app.get('/api/proxy-download', async (req, res) => {
+    const targetMediaUrl = req.query.url;
+    const clientFileName = req.query.filename || 'instagram_download.mp4';
+
+    if (!targetMediaUrl) {
+        return res.status(400).send('Missing download source URL parameter.');
+    }
+
+    try {
+        console.log(`Streaming file payload from CDN source: ${targetMediaUrl}`);
+        
+        // Fetch raw asset byte data directly from CDN as a stream
+        const cdnResponse = await axios({
+            method: 'get',
+            url: targetMediaUrl,
+            responseType: 'stream',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        });
+
+        // Force browser to save file directly instead of opening it
+        res.setHeader('Content-Disposition', `attachment; filename="${clientFileName}"`);
+        res.setHeader('Content-Type', cdnResponse.headers['content-type'] || 'application/octet-stream');
+
+        // Pipe streaming data seamlessly straight into browser response down onto computer drive
+        cdnResponse.data.pipe(res);
+
+    } catch (error) {
+        console.error('Proxy attachment pipeline stream failure:', error.message);
+        res.status(500).send('Could not package file bytes into attachment stream. Open link manually.');
     }
 });
 
