@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Direct Instagram Downloader</title>
+    <title>Instagram Multi-Downloader</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #fafafa; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); width: 100%; max-width: 500px; text-align: center; border: 1px solid #dbdbdb; }
@@ -24,15 +24,15 @@
 
 <div class="card">
     <h1>Insta Multi-Downloader</h1>
-    <p class="subtitle">Bypasses server blocks using local browser extraction</p>
-    <input type="text" id="urlInput" placeholder="Paste public Instagram link here..." />
-    <button id="fetchBtn" onclick="handleBrowserScrape()">Extract Media</button>
+    <p class="subtitle">Extract Reels, Carousel Images, Posts & Stories</p>
+    <input type="text" id="urlInput" placeholder="Paste your public Instagram link here..." />
+    <button id="fetchBtn" onclick="handleDownload()">Extract Media</button>
     <div id="errorMsg" class="error"></div>
     <div id="resultContainer" class="result-container"></div>
 </div>
 
 <script>
-    async function handleBrowserScrape() {
+    async function handleDownload() {
         const urlInput = document.getElementById('urlInput').value.trim();
         const fetchBtn = document.getElementById('fetchBtn');
         const errorMsg = document.getElementById('errorMsg');
@@ -41,59 +41,25 @@
         errorMsg.style.display = 'none';
         resultContainer.innerHTML = '';
 
-        if (!urlInput || !urlInput.includes('instagram.com')) {
-            errorMsg.innerText = 'Please paste a valid public Instagram link.';
+        if (!urlInput) {
+            errorMsg.innerText = 'Please paste a valid link.';
             errorMsg.style.display = 'block';
             return;
         }
 
         fetchBtn.disabled = true;
-        fetchBtn.innerText = 'Extracting using local IP...';
+        fetchBtn.innerText = 'Extracting content stream...';
 
         try {
-            // 1. Clean the link and target the unblocked open embed gateway layout
-            let cleanUrl = urlInput.split('?')[0];
-            if (!cleanUrl.endsWith('/')) cleanUrl += '/';
-            const targetEmbedUrl = `${cleanUrl}embed/captioned/`;
+            const response = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: urlInput })
+            });
+            const data = await response.json();
 
-            // 2. Fetch directly from the client browser profile context
-            const response = await fetch(targetEmbedUrl);
-            if (!response.ok) throw new Error("Instagram's server rejected the browser connection handshake.");
-            
-            const htmlContent = await response.text();
-            let mediaResults = [];
-
-            // Pattern Match A: Extract primary high-definition video source components
-            const videoMatch = htmlContent.match(/"video_url":"([^"]+)"/);
-            if (videoMatch && videoMatch[1]) {
-                mediaResults.push({ type: 'video', url: videoMatch[1].replace(/\\u0026/g, '&') });
-            }
-
-            // Pattern Match B: Extract high-definition fallback thumbnail graphic links
-            const displayMatch = htmlContent.match(/"display_url":"([^"]+)"/);
-            if (displayMatch && displayMatch[1]) {
-                mediaResults.push({ type: 'image', url: displayMatch[1].replace(/\\u0026/g, '&') });
-            }
-
-            // Pattern Match C: Fallback string parser scanning for hidden cdn link groupings
-            if (mediaResults.length === 0) {
-                const cdnLinks = htmlContent.match(/https:\/\/instagram\.[f,b]x[a-z0-9\-]+\.fna\.fbcdn\.net\/[^"\s']+/g);
-                if (cdnLinks) {
-                    const uniqueLinks = Array.from(new Set(cdnLinks));
-                    uniqueLinks.forEach(link => {
-                        const cleanLink = link.replace(/\\u0026/g, '&');
-                        const isVid = cleanLink.includes('.mp4') || cleanLink.includes('mp4=');
-                        mediaResults.push({ type: isVid ? 'video' : 'image', url: cleanLink });
-                    });
-                }
-            }
-
-            // 3. Render items out to the page layout interface UI blocks
-            if (mediaResults.length > 0) {
-                // Remove dynamic identical string items
-                const uniqueCollection = mediaResults.filter((v, i, a) => a.findIndex(t => t.url.split('?')[0] === v.url.split('?')[0]) === i);
-
-                uniqueCollection.forEach((item, index) => {
+            if (data.success && data.media && data.media.length > 0) {
+                data.media.forEach((item, index) => {
                     const itemDiv = document.createElement('div');
                     itemDiv.className = 'media-item';
                     const filename = `instagram_${item.type}_${index + 1}.${item.type === 'video' ? 'mp4' : 'jpg'}`;
@@ -101,22 +67,22 @@
                     if (item.type === 'video') {
                         itemDiv.innerHTML = `
                             <video class="media-preview" src="${item.url}" controls></video>
-                            <button class="download-btn" onclick="saveBlobFile('${item.url}', '${filename}', this)">Download Video</button>
+                            <button class="download-btn" onclick="saveFile('${item.url}', '${filename}', this)">Download Video #${index + 1}</button>
                         `;
                     } else {
                         itemDiv.innerHTML = `
                             <img class="media-preview" src="${item.url}" alt="Preview" />
-                            <button class="download-btn" onclick="saveBlobFile('${item.url}', '${filename}', this)">Download Image</button>
+                            <button class="download-btn" onclick="saveFile('${item.url}', '${filename}', this)">Download Image #${index + 1}</button>
                         `;
                     }
                     resultContainer.appendChild(itemDiv);
                 });
             } else {
-                throw new Error("No media parameters found inside the page stream structure.");
+                errorMsg.innerText = data.error || 'No downloadable links returned.';
+                errorMsg.style.display = 'block';
             }
-
         } catch (err) {
-            errorMsg.innerText = "Extraction failed. The post might be completely private, or your current browser context is hitting automated limits.";
+            errorMsg.innerText = 'Server processing timed out. Verify your API configuration token.';
             errorMsg.style.display = 'block';
         } finally {
             fetchBtn.disabled = false;
@@ -124,31 +90,9 @@
         }
     }
 
-    // Direct binary downloader handler running locally on the user machine context
-    async function saveBlobFile(mediaUrl, filename, btn) {
-        const text = btn.innerText;
-        btn.innerText = 'Downloading...';
-        btn.disabled = true;
-
-        try {
-            const res = await fetch(mediaUrl);
-            const blob = await res.blob();
-            const blobUrl = window.URL.createObjectURL(blob);
-            
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(blobUrl);
-        } catch (e) {
-            window.open(mediaUrl, '_blank'); // Instant fallback tab generation bypass if CORS triggers
-        } finally {
-            btn.innerText = text;
-            btn.disabled = false;
-        }
+    function saveFile(mediaUrl, filename, btn) {
+        // Since we have direct raw URLs, bypass local parsing and trigger an direct separate download context
+        window.open(mediaUrl, '_blank');
     }
 </script>
 </body>
