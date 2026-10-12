@@ -58,23 +58,27 @@
 
             if (data.success && data.media.length > 0) {
                 data.media.forEach((item, index) => {
-                    const itemDiv = document.createElement('div');
-                    itemDiv.className = 'media-item';
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'media-item';
 
-                    // Generate appropriate visual previews
-                    if (item.type === 'video') {
-                        itemDiv.innerHTML = `
-                            <video class="media-preview" src="${item.url}" controls></video>
-                            <a class="download-btn" href="${item.url}" target="_blank" download="instagram_video_${index+1}.mp4">Download Video #${index+1}</a>
-                        `;
-                    } else {
-                        itemDiv.innerHTML = `
-                            <img class="media-preview" src="${item.url}" alt="Preview" />
-                            <a class="download-btn" href="${item.url}" target="_blank" download="instagram_image_${index+1}.jpg">Download Image #${index+1}</a>
-                        `;
-                    }
-                    resultContainer.appendChild(itemDiv);
-                });
+    // Route target links through our server-side streaming proxy endpoint
+    const encodedMediaUrl = encodeURIComponent(item.url);
+    const proxyDownloadUrl = `/api/proxy-download?url=${encodedMediaUrl}&filename=instagram_${item.type}_${index+1}.${item.type === 'video' ? 'mp4' : 'jpg'}`;
+
+    if (item.type === 'video') {
+        itemDiv.innerHTML = `
+            <video class="media-preview" src="${item.url}" controls></video>
+            <a class="download-btn" href="${proxyDownloadUrl}">Download Video #${index+1}</a>
+        `;
+    } else {
+        itemDiv.innerHTML = `
+            <img class="media-preview" src="${item.url}" alt="Preview" />
+            <a class="download-btn" href="${proxyDownloadUrl}">Download Image #${index+1}</a>
+        `;
+    }
+    resultContainer.appendChild(itemDiv);
+});
+
             } else {
                 errorMsg.innerText = data.error || 'No downloadable content detected.';
             }
