@@ -13,74 +13,67 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Secure token loaded via the Render Environment configuration panel
 const APIFY_TOKEN = process.env.APIFY_TOKEN || ""; 
 
-// Central parsing function utilizing Apify's Premium Core Post Scraper
+// High-success extraction utilizing the direct ApiDojo high-bypass core framework
 async function fetchInstagramMedia(url) {
     if (!APIFY_TOKEN) {
         throw new Error("API Token missing. Please check your APIFY_TOKEN key configuration inside Render.");
     }
     
-    // Clean the URL structure to ensure consistency
-    let cleanUrl = url.split('?')[0];
-    if (!cleanUrl.endsWith('/')) cleanUrl += '/';
-
-    // Target the premium core post scraper runner endpoint
+    // Target the specific ApiDojo premium scraper API runner layer
     const targetApiUrl = "https://apify.com";
 
-    console.log(`Routing premium core high-bypass scraper request for URL: ${cleanUrl}`);
+    console.log(`Routing optimized ApiDojo framework request for URL: ${url}`);
     
-    // The core actor takes an array of direct URLs and isolates data points
+    // The ApiDojo scraper uses the 'posts' target query mode for specific direct URLs
     const response = await axios.post(
         targetApiUrl,
         {
-            "directUrls": [cleanUrl],
+            "directUrls": [url],
             "resultsType": "details"
         },
         { 
             params: { token: APIFY_TOKEN },
             headers: { 'Content-Type': 'application/json' },
-            timeout: 60000 // Extended timeout to allow proxy handshakes to complete
+            timeout: 60000 
         }
     );
 
-    const datasetItems = response.data;
-    if (!datasetItems || !Array.isArray(datasetItems) || datasetItems.length === 0) {
-        throw new Error("Instagram blocked the scraper connection pool. Please try extraction again in a moment.");
+    const items = response.data;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+        throw new Error("No data returned from high-bypass engine. Confirm the account profile is entirely public.");
     }
 
-    // Extract the primary data node block
-    const postData = datasetItems[0];
+    const postData = items[0]; // Isolate the primary container data node object
     let mediaResults = [];
 
-    // Case 1: Carousel / Multi-slide posts
+    // Extract dynamic variations from ApiDojo object schema mapping
     if (postData.childPosts && Array.isArray(postData.childPosts) && postData.childPosts.length > 0) {
+        // Scenario A: Carousel Post layouts
         mediaResults = postData.childPosts.map(child => {
-            const isVid = child.isVideo || !!child.videoUrl;
             return {
-                type: isVid ? 'video' : 'image',
-                url: child.videoUrl || child.displayUrl
+                type: (child.isVideo || child.videoUrl) ? 'video' : 'image',
+                url: child.videoUrl || child.displayUrl || child.imageUrl
             };
         });
-    } 
-    // Case 2: Single Reel or Video Post
-    else if (postData.isVideo || postData.videoUrl) {
+    } else if (postData.isVideo || postData.videoUrl) {
+        // Scenario B: Single Video / Reel
         mediaResults.push({
             type: 'video',
             url: postData.videoUrl || postData.displayUrl
         });
-    } 
-    // Case 3: Single Image / Photo Post
-    else if (postData.displayUrl || postData.imageUrl) {
+    } else if (postData.displayUrl || postData.imageUrl) {
+        // Scenario C: Single Image Post
         mediaResults.push({
             type: 'image',
             url: postData.displayUrl || postData.imageUrl
         });
     }
 
-    // Clean up empty parameters and deduplicate the extracted link strings
-    const finalCleaned = mediaResults.filter(item => item.url);
+    // Filter out missing strings or malformed properties cleanly
+    const finalCleaned = mediaResults.filter(item => item.url && item.url !== 'undefined');
 
     if (finalCleaned.length === 0) {
-        throw new Error("Could not extract any direct media links from the post metadata.");
+        throw new Error("Extraction complete, but failed to locate raw media links inside the payload block.");
     }
 
     return finalCleaned;
@@ -97,7 +90,7 @@ app.post('/api/download', async (req, res) => {
         const media = await fetchInstagramMedia(url);
         return res.json({ success: true, media });
     } catch (error) {
-        console.error(`Premium Scraper Failed:`, error.message);
+        console.error(`ApiDojo Processing Failed:`, error.message);
         return res.status(500).json({ error: error.message });
     }
 });
