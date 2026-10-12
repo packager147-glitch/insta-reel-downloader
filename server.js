@@ -19,29 +19,42 @@ async function fetchInstagramMedia(url) {
         throw new Error("API Token missing. Please check your APIFY_TOKEN key configuration inside Render.");
     }
     
-    // Target the specific SnapCDN API endpoint structure
-    const targetApiUrl = `https://elis--instagram-downloader-api.apify.actor/api/v1/download`;
+    // Exact structural endpoint to trigger the actor container directly
+    const targetApiUrl = `https://apify.com`;
 
     console.log(`Routing optimized SnapCDN API query request for URL: ${url}`);
     
-    const response = await axios.get(targetApiUrl, {
-        params: { url: url },
-        headers: { 
-            'Authorization': `Bearer ${APIFY_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        timeout: 45000 // 45-second connection execution constraint
-    });
+    // The actor expects a POST request with the URL passed inside the JSON payload body
+    const response = await axios.post(
+        targetApiUrl, 
+        {
+            "url": url
+        }, 
+        {
+            params: { token: APIFY_TOKEN },
+            headers: { 
+                'Content-Type': 'application/json'
+            },
+            timeout: 45000 // 45-second execution constraint
+        }
+    );
 
-    const data = response.data;
+    const dataItems = response.data;
     
-    if (!data || data.status !== "success" || !Array.isArray(data.result) || data.result.length === 0) {
-        throw new Error("The API engine could not find any active public links for this URL.");
+    // Check if the dataset items exist or if the array returned empty
+    if (!dataItems || !Array.isArray(dataItems) || dataItems.length === 0) {
+        throw new Error("The API engine could not find any active public media structures for this URL.");
     }
 
-    // Map SnapCDN payload schema keys directly to the frontend's expected schema
-    const mediaResults = data.result.map(item => {
-        // Evaluate media layout signature variables cleanly
+    // Process the first dataset entry item returned from the run execution array
+    const resultItem = dataItems[0];
+
+    if (!resultItem.result || !Array.isArray(resultItem.result) || resultItem.result.length === 0) {
+        throw new Error("Extraction complete but no downloadable result links found inside the object block.");
+    }
+
+    // Map the internal results payload array directly to your frontend architecture
+    const mediaResults = resultItem.result.map(item => {
         const isVideoType = item.type === 'video' || item.url.includes('.mp4') || item.url.includes('mp4=');
         return {
             type: isVideoType ? 'video' : 'image',
