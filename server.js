@@ -1,158 +1,117 @@
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-const path = require('path');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Video Downloader</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); width: 100%; max-width: 500px; text-align: center; border: 1px solid #dbdbdb; }
+        h1 { color: #262626; font-size: 26px; margin: 0 0 6px 0; font-weight: 700; }
+        p.subtitle { color: #8e8e8e; font-size: 14px; margin: 0 0 24px 0; }
+        .input-container { display: flex; gap: 8px; margin-bottom: 15px; position: relative; }
+        input { flex: 1; padding: 14px 12px; border: 1px solid #dbdbdb; border-radius: 8px; box-sizing: border-box; font-size: 14px; background: #fafafa; transition: all 0.2s ease; }
+        input:focus { outline: none; border-color: #a8a8a8; background: white; }
+        .paste-btn { padding: 0 14px; background-color: #efefef; border: 1px solid #dbdbdb; border-radius: 8px; color: #262626; font-weight: 600; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+        .paste-btn:hover { background-color: #e2e2e2; }
+        .action-btn { width: 100%; padding: 14px; background-color: #0095f6; border: none; border-radius: 8px; color: white; font-weight: bold; font-size: 14px; cursor: pointer; transition: background-color 0.2s ease; }
+        .action-btn:hover { background-color: #1877f2; }
+        .action-btn:disabled { background-color: #b2dffc; cursor: not-allowed; }
+        .error { color: #ed4956; margin-top: 15px; font-size: 14px; font-weight: 500; display: none; }
+        .result-container { margin-top: 25px; text-align: left; max-height: 450px; overflow-y: auto; padding-right: 5px; }
+        .media-item { background: #ffffff; padding: 12px; border-radius: 10px; margin-bottom: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; border: 1px solid #e6e6e6; }
+        .media-preview { max-width: 100%; max-height: 250px; border-radius: 6px; object-fit: contain; background: #000; }
+        .download-link { display: block; width: 100%; text-align: center; padding: 12px 0; background-color: #34a853; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 14px; text-decoration: none; box-sizing: border-box; transition: background-color 0.2s ease; }
+        .download-link:hover { background-color: #2e8b46; }
+    </style>
+</head>
+<body>
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+<div class="card">
+    <h1>Universal Downloader</h1>
+    <p class="subtitle">Supports Instagram Reels, YouTube Shorts & TikTok</p>
+    
+    <div class="input-container">
+        <input type="text" id="urlInput" placeholder="Paste link here..." />
+        <button class="paste-btn" onclick="pasteFromClipboard()">Paste</button>
+    </div>
+    
+    <button id="fetchBtn" class="action-btn" onclick="handleDownload()">Extract Media</button>
+    <div id="errorMsg" class="error"></div>
+    <div id="resultContainer" class="result-container"></div>
+</div>
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+<script>
+    // Native system clipboard pasting shortcut
+    async function pasteFromClipboard() {
+        try {
+            const text = await navigator.clipboard.readText();
+            document.getElementById('urlInput').value = text;
+        } catch (err) {
+            alert("Clipboard permission denied. Please paste your link manually into the box.");
+        }
+    }
 
-// Retrieve your free authentication key loaded inside your Render Environment panel
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+    async function handleDownload() {
+        const urlInput = document.getElementById('urlInput').value.trim();
+        const fetchBtn = document.getElementById('fetchBtn');
+        const errorMsg = document.getElementById('errorMsg');
+        const resultContainer = document.getElementById('resultContainer');
 
-// Failsafe deep scanner to find URLs in a complex object when keys mismatch
-function deepFindMediaUrls(obj, extracted = []) {
-    if (!obj) return extracted;
+        errorMsg.style.display = 'none';
+        resultContainer.innerHTML = '';
 
-    if (typeof obj === 'string') {
-        // If it's a valid link format containing standard video or image indicators
-        if (obj.startsWith('http://') || obj.startsWith('https://')) {
-            const isVideo = obj.includes('.mp4') || obj.includes('mp4=') || obj.includes('/v/') || obj.includes('video');
-            const isImage = obj.includes('.jpg') || obj.includes('.jpeg') || obj.includes('.png') || obj.includes('.webp') || obj.includes('image');
-            
-            if (isVideo || isImage) {
-                extracted.push({
-                    type: isVideo ? 'video' : 'image',
-                    url: obj.replace(/\\u0026/g, '&') // Clean unicode formatting if present
+        if (!urlInput) {
+            errorMsg.innerText = 'Please input a valid URL.';
+            errorMsg.style.display = 'block';
+            return;
+        }
+
+        fetchBtn.disabled = true;
+        fetchBtn.innerText = 'Extracting media elements...';
+
+        try {
+            const response = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: urlInput })
+            });
+            const data = await response.json();
+
+            if (data.success && data.media && data.media.length > 0) {
+                data.media.forEach((item, index) => {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'media-item';
+
+                    const extension = item.type === 'video' ? 'mp4' : 'jpg';
+                    const filename = `download_${item.type}_${Date.now()}_${index + 1}.${extension}`;
+                    const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(filename)}`;
+
+                    if (item.type === 'video') {
+                        itemDiv.innerHTML = `
+                            <video class="media-preview" src="${item.url}" controls preload="metadata"></video>
+                            <a class="download-link" href="${proxyUrl}">Download Video File</a>
+                        `;
+                    } else {
+                        itemDiv.innerHTML = `
+                            <img class="media-preview" src="${item.url}" alt="Preview Frame" />
+                            <a class="download-link" href="${proxyUrl}">Download Image File</a>
+                        `;
+                    }
+                    resultContainer.appendChild(itemDiv);
                 });
+            } else {
+                errorMsg.innerText = data.error || 'Could not find media content links.';
+                errorMsg.style.display = 'block';
             }
-        }
-    } else if (Array.isArray(obj)) {
-        for (const element of obj) {
-            deepFindMediaUrls(element, extracted);
-        }
-    } else if (typeof obj === 'object') {
-        for (const key in obj) {
-            if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                deepFindMediaUrls(obj[key], extracted);
-            }
+        } catch (err) {
+            errorMsg.innerText = 'Connection timed out during server side processing.';
+            errorMsg.style.display = 'block';
+        } finally {
+            fetchBtn.disabled = false;
+            fetchBtn.innerText = 'Extract Media';
         }
     }
-    return extracted;
-}
-
-async function fetchMediaViaAllInOneAPI(instagramUrl) {
-    if (!RAPIDAPI_KEY) {
-        throw new Error("RapidAPI Key configuration missing. Please add RAPIDAPI_KEY inside Render.");
-    }
-
-    console.log(`[FastSaver] Querying direct endpoint: ${instagramUrl}`);
-
-    const response = await axios.get('https://instagram-tiktok-youtube-downloader.p.rapidapi.com/fetch', {
-        params: { url: instagramUrl },
-        headers: {
-            'x-rapidapi-key': RAPIDAPI_KEY,
-            'x-rapidapi-host': 'instagram-tiktok-youtube-downloader.p.rapidapi.com'
-        },
-        timeout: 30000
-    });
-
-    const data = response.data;
-    if (!data) throw new Error("Empty response received from the API endpoint.");
-
-    console.log("[Raw API Response Payload Debug]:", JSON.stringify(data));
-
-    let mediaResults = [];
-
-    // Approach 1: Try strict property checking based on documentation structures
-    if (data.type === 'album' && Array.isArray(data.items)) {
-        mediaResults = data.items.map(item => ({
-            type: item.type === 'video' ? 'video' : 'image',
-            url: item.download_url || item.url
-        }));
-    } else if (Array.isArray(data.url)) {
-        mediaResults = data.url.map(item => ({
-            type: (item.type === 'video' || (item.url && item.url.includes('.mp4'))) ? 'video' : 'image',
-            url: item.url || item.download_url || item
-        }));
-    } else if (data.download_url || data.url) {
-        const fallbackLink = data.download_url || data.url;
-        if (typeof fallbackLink === 'string') {
-            const isVid = data.type === 'video' || fallbackLink.includes('.mp4');
-            mediaResults.push({ type: isVid ? 'video' : 'image', url: fallbackLink });
-        }
-    }
-
-    // Approach 2: Failsafe Scanner (If the keys mismatched, grab raw file links from the entire response)
-    if (mediaResults.length === 0 || !mediaResults[0].url) {
-        console.log("[Scanner] Strict keys empty. Booting fallback scanner...");
-        mediaResults = deepFindMediaUrls(data);
-    }
-
-    // Filter out duplicates and invalid strings cleanly
-    const seenUrls = new Set();
-    const finalCleaned = mediaResults.filter(item => {
-        if (!item.url || typeof item.url !== 'string') return false;
-        const base = item.url.split('?')[0]; // Deduplicate matching objects
-        if (seenUrls.has(base)) return false;
-        seenUrls.add(base);
-        return true;
-    });
-
-    if (finalCleaned.length === 0) {
-        throw new Error("Could not parse media components out of the API response structure.");
-    }
-
-    return finalCleaned;
-}
-
-// 1. Unified Metadata Retrieval API Endpoint
-app.post('/api/download', async (req, res) => {
-    const { url } = req.body;
-    if (!url || (!url.includes('instagram.com') && !url.includes('instagr.am'))) {
-        return res.status(400).json({ error: 'Please provide a valid Instagram link.' });
-    }
-    try {
-        const media = await fetchMediaViaAllInOneAPI(url);
-        return res.json({ success: true, media });
-    } catch (error) {
-        console.error(`Processing error stack:`, error.message);
-        return res.status(500).json({ error: error.message });
-    }
-});
-
-// 2. STABLE FILE TUNNEL: Streams the target bytes straight onto your device's filesystem folder structure
-app.get('/api/proxy-download', async (req, res) => {
-    const targetMediaUrl = req.query.url;
-    const clientFileName = req.query.filename || 'instagram_download.mp4';
-
-    if (!targetMediaUrl) return res.status(400).send('Missing download parameters.');
-
-    try {
-        console.log(`Piping direct local storage attachment download stream...`);
-        const cdnResponse = await axios({
-            method: 'get',
-            url: targetMediaUrl,
-            responseType: 'stream',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-        });
-
-        // Force desktop browser download mechanics into your computer's local directory path
-        res.setHeader('Content-Disposition', `attachment; filename="${clientFileName}"`);
-        res.setHeader('Content-Type', cdnResponse.headers['content-type'] || 'application/octet-stream');
-
-        cdnResponse.data.pipe(res);
-    } catch (error) {
-        console.error('File stream pipeline failure:', error.message);
-        res.status(500).send('Could not compile local media bytes bundle.');
-    }
-});
-
-app.listen(PORT, () => {
-    console.log(`Server running successfully on port ${PORT}`);
-});
+</script>
+</body>
+</html>
